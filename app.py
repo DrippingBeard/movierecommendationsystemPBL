@@ -1,4 +1,5 @@
 from flask import Flask,render_template,request
+import os
 # from final_edit import get_recommendations
 from hybrid import predict_movies,generate_cosine_tfidf,top_movies
 
@@ -24,4 +25,6 @@ def home():
     return render_template('prediction.html', movie_names=names, movie_genres= genres, movie_links= links, moviename=moviename)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+	port = int(os.getenv('PORT', 5000))
+#    app.run(debug=True)
+	app.run(port=port)
