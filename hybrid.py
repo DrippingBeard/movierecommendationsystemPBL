@@ -10,8 +10,8 @@ from ast import literal_eval
 
 import warnings
 warnings.filterwarnings("ignore")
-data = pd.read_csv('/Users/shreejamehta/Desktop/movierecomsystem/movies_metadata.csv', low_memory = False)[['id','original_title', 'imdb_id', 'genres', 'overview', 'vote_average', 'vote_count']].dropna().set_index('id')
-credits = pd.read_csv('/Users/shreejamehta/Desktop/movierecomsystem/credits.csv', low_memory = False).set_index('id').dropna()
+data = pd.read_csv('./movies_metadata.csv', low_memory = False)[['id','original_title', 'imdb_id', 'genres', 'overview', 'vote_average', 'vote_count']].dropna().set_index('id')
+credits = pd.read_csv('./credits.csv', low_memory = False).set_index('id').dropna()
 
 def split_genres(row):
     row['genres'] = " ".join([info['name'] for info in literal_eval(row['genres'])])

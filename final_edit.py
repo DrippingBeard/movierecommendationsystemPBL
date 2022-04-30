@@ -1,101 +1,136 @@
-# Import necessary libraries
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns 
-from tqdm import tqdm
-import warnings 
+import numpy as np
+import re
+from sklearn.metrics.pairwise import cosine_similarity
+from nltk.corpus import stopwords
+stopwords_english = set(stopwords.words('english'))
+from nltk.stem import PorterStemmer
+stemmer = PorterStemmer()
 from ast import literal_eval
-warnings.filterwarnings('ignore')
+
+import warnings
+warnings.filterwarnings("ignore")
+"""
+D:\SecondYearFiles\FourthSemesterFiles\ProjectBasedLearning\ProjectFiles\movies_metadata.csv
+D:\SecondYearFiles\FourthSemesterFiles\ProjectBasedLearning\ProjectFiles\credits.csv
+"""
+
+data = pd.read_csv("./movies_metadata.csv", low_memory = False)[['id','original_title', 'imdb_id', 'genres', 'overview', 'vote_average', 'vote_count']].dropna().set_index('id')
+credits = pd.read_csv("./credits.csv",low_memory = False).set_index('id').dropna()
+
+def split_genres(row):
+    row['genres'] = " ".join([info['name'] for info in literal_eval(row['genres'])])
+    return row
+data = data.apply(split_genres, axis=1)
+
+def find_director(row):
+    try:
+        for info in literal_eval(row['crew']):
+            if info['job'] == 'Director':
+                row['director'] = info['name']
+                break
+    except:
+        row['director'] = pd.NA
+    return row
+credits = credits.apply(find_director, axis=1).drop(['cast', 'crew'], axis=1)
+credits.index = credits.index.astype(str)
+
+data = pd.merge(data, credits, left_index = True, right_index = True, how = 'left')
+data.index = data.index.astype(int)
+
+def top_movies(num = 100, quantile = 0.95, data = data):
+    req_votes = np.quantile(data['vote_count'], quantile)
+
+    new_data = data[data['vote_count']>req_votes]
+    means = new_data['vote_average']
+    tot_mean = new_data['vote_average'].mean()
+    votes = new_data['vote_count']
+
+    new_data['ratings'] = (votes/(votes+req_votes)*means + req_votes/(votes+req_votes)*tot_mean)
+
+    return new_data.sort_values('ratings', ascending = False).iloc[:num,:].reset_index(drop=True)
+
+def clean(x):
+    res = []
+    for w in x:
+        if w not in stopwords_english:
+            w = stemmer.stem(re.sub('[^a-zA-z0-9]', '', w))
+            if(len(w)>0):
+                res.append(w)
+    return res
+
+def preprocess(data):
+    stemmer = PorterStemmer()
+    docs = []
+    DF = {}
+
+    for ind, row in data.iterrows():
+        set_title = set()
+        doc_count = 0
+        title = row['original_title'].lower().strip().split()
+        title += row['genres'].lower().strip().split()
+        title += [row['director'].lower().strip()]
+        body = row['overview'].lower().strip().split()
+        body = clean(body)
+
+        for word in title+body:
+            if word in DF:
+                if row.name in DF[word]:
+                    DF[word][row.name]+=1
+                else:
+                    DF[word][row.name] = 1
+            else:
+                DF[word] = {}
+                DF[word][row.name] = 1
+
+            doc_count+=1
+            if word in title:
+                set_title.add(word)
+        docs.append((doc_count, set_title))
+
+    return DF, docs
 
 
-from scipy import stats
-from ast import literal_eval
-from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-from sklearn.metrics.pairwise import linear_kernel, cosine_similarity
-from nltk.stem.snowball import SnowballStemmer
+def generate_cosine_tfidf(data, alpha = 0.6):
+    DF, docs = preprocess(data)
+    tf_idf = np.zeros((len(docs), len(DF)))
 
-metadata=pd.read_csv("/Users/shreejamehta/movierecomsystem/movies_metadata.csv")
+    for i, (word, key) in enumerate(DF.items()):
+        w_count = np.sum([value for _, value in key.items()])
+        for ind, value in key.items():
+            tf = value/docs[ind][0]
+            idf = np.log(len(docs)/(w_count+1))
+            tfidf = tf*idf*(1-alpha)
+            if word in docs[ind][1]:
+                tfidf = tf*idf*alpha
 
-pd.DataFrame(metadata.isnull().sum()/(metadata.shape[0])*100)
+            tf_idf[ind][i] = tfidf
+    return cosine_similarity(tf_idf)
 
-credit=pd.read_csv("/Users/shreejamehta/movierecomsystem/credits.csv")
-keyword=pd.read_csv("/Users/shreejamehta/movierecomsystem/keywords.csv")
+movies = top_movies(2000)
+tf_idf = generate_cosine_tfidf(movies, alpha = 0.6)
 
-metadata = metadata.drop([19730, 29503, 35587])
-keyword['id'] = keyword['id'].astype('int')
-credit['id'] = credit['id'].astype('int')
-metadata['id'] = metadata['id'].astype('int')
-metadata=metadata.merge(credit,on='id')
-metadata=metadata.merge(keyword,on='id')
+def predict_movies(movie_name = "The Dark Knight", num = 10, verbose = 0, out = True, data = movies, tf_idf = tf_idf):
+    try:
+        ind = data[data['original_title'] == movie_name].index[0]
+        output = data.loc[[val for val in np.argsort(tf_idf[ind])[::-1][1:num+1]]]
+        if verbose == 2:
+            print("The TF-IDF Cosine similarity scores for relevant movies are as follows:\n")
+            print([round(val,2) for val in np.sort(tf_idf[ind])[::-1][1:num+1]], '\n')
+        if verbose >= 1:
+            print(f'The top {num} recommended movies for "{movie_name}" are as follows:\n')
+            for ind, row in output.iterrows():
+                print("Title: {}".format(row['original_title']))
+                print("Rating: {}".format(round(row['ratings'], 1)))
+                print("Genres: {}".format(row['genres']))
+                print("IMDB Link: https://www.imdb.com/title/{}".format(row['imdb_id']))
+                print("*****************************************************\n")
+        if(out):
+            return output
+    except:
+        print("MOVIE NOT FOUND!")
 
-metadata['cast']=metadata['cast'].apply(literal_eval)
-metadata['crew'] = metadata['crew'].apply(literal_eval)
-metadata['keywords'] = metadata['keywords'].apply(literal_eval)
+# movies = top_movies(2000)
+# tf_idf = generate_cosine_tfidf(movies, alpha = 0.6)
 
-metadata['cast_size']=metadata['cast'].apply(lambda x:len(x))
-metadata['crew_size']=metadata['crew'].apply(lambda x:len(x))
-
-def get_director(x):
-    for i in x:
-        if i['job']=='Director':
-            return i['name']
-    return np.nan
-metadata['director']=metadata['crew'].apply(get_director)
-metadata['cast'] = metadata['cast'].apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
-metadata['cast'] = metadata['cast'].apply(lambda x: x[:3] if len(x) >=3 else x)
-
-metadata['keywords'] = metadata['keywords'].apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
-
-metadata['cast']=metadata['cast'].apply(lambda x:[str.lower(i.replace(" ","")) for i in x])
-metadata['director']=metadata['director'].astype('str').apply(lambda x : x.replace(" ",""))
-metadata['director']=metadata['director'].apply(lambda x:[x,x,x])
-
-s=metadata.apply(lambda x:pd.Series(x['keywords']),axis=1).stack().reset_index(level=1,drop=True)
-s.name='keyword'
-s=s.value_counts()
-s=s[s>1]
-
-def filter_keywords(x):
-    words = []
-    for i in x:
-        if i in s:
-            words.append(i)
-    return words
-
-stemmer = SnowballStemmer('english')
-metadata['keywords'] = metadata['keywords'].apply(filter_keywords)
-metadata['keywords'] = metadata['keywords'].apply(lambda x: [stemmer.stem(i) for i in x])
-metadata['keywords'] = metadata['keywords'].apply(lambda x: [str.lower(i.replace(" ", "")) for i in x])
-
-metadata['genres'] = metadata['genres'].fillna('[]').apply(literal_eval).apply(lambda x: [i['name'] for i in x] if isinstance(x, list) else [])
-
-list_=[]
-def genre_vis(x):
-    for i in x:
-        for j in i:
-            list_.append(j)
-genre_vis(metadata['genres'])
-
-ge=pd.Series(list_)
-
-metadata['soup'] = metadata['keywords'] + metadata['cast'] + metadata['director'] + metadata['genres']
-metadata['soup'] = metadata['soup'].apply(lambda x: ' '.join(x))
-
-count = CountVectorizer(analyzer='word',ngram_range=(1, 2),min_df=0, stop_words='english')
-count_matrix = count.fit_transform(metadata['soup'])
-cosine_sim = cosine_similarity(count_matrix, count_matrix)
-
-smd = metadata.reset_index()
-titles = metadata['title']
-indices = pd.Series(metadata.index, index=metadata['title'])
-
-def get_recommendations(title):
-    idx = indices[title]
-    sim_scores = list(enumerate(cosine_sim[idx]))
-    sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
-    sim_scores = sim_scores[1:31]
-    movie_indices = [i[0] for i in sim_scores]
-    return titles.iloc[movie_indices]
-
-print(get_recommendations('Jumanji').head(10))
+predict_movies("Moana", num = 10, verbose = 2, out = False, data = movies, tf_idf = tf_idf)
