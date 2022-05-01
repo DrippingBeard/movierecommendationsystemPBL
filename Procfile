@@ -1,2 +1,2 @@
-urgentworker: git lfs pull
+//urgentworker: git lfs pull
 web: python app.py
