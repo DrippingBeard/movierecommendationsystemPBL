@@ -10,10 +10,7 @@ from ast import literal_eval
 
 import warnings
 warnings.filterwarnings("ignore")
-"""
-D:\SecondYearFiles\FourthSemesterFiles\ProjectBasedLearning\ProjectFiles\movies_metadata.csv
-D:\SecondYearFiles\FourthSemesterFiles\ProjectBasedLearning\ProjectFiles\credits.csv
-"""
+
 
 data = pd.read_csv("./movies_metadata.csv", low_memory = False)[['id','original_title', 'imdb_id', 'genres', 'overview', 'vote_average', 'vote_count']].dropna().set_index('id')
 credits = pd.read_csv("./credits.csv",low_memory = False).set_index('id').dropna()
